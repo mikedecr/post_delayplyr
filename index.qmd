@@ -1,0 +1,415 @@
+---
+author: Michael DeCrescenzo
+categories: [code, r]
+title: 'Dreams of a "Lazyverse": a delayed evaluation interface for tidy data manipulation in R'
+# subtitle: Lazyverse
+# excerpt
+date: "2023-06-30"
+knitr:
+    opts_chunk:
+        eval: true
+        include: true
+        collapse: true
+draft: false
+---
+
+
+It is hard to introduce what this post is about.
+I will try.
+
+This post proposes a delayed evaluation, function-forward interface for Tidyverse data manipulation, focusing primarily on `dplyr` verbs.
+Instead of writing `data |> verb(args)`, it should be easier to write `verb(args)` as its own expression, save it ahead of time, and later evaluate it on `data`.
+
+This post provides some less-than-ideal code to implement such an interface.
+It is surely incomplete.
+But the interface is interesting and appealing at least to me, a nostalgic R user with a new love of functional programming.
+
+
+# (Many) R users love the Tidyverse
+
+Let us count the reasons:
+
+- **Uniform interfaces** mean functions are composable.
+  `dplyr` and `tidyr` provide functions that map dataframes to dataframes.
+  `stringr` functions map string vector to string vector.
+  `forcats` functions map factor to factor.
+  And the argument structures are similar: an object of type T goes in the first argument, and an object of type T is returned.
+  (N.B. by "type" I basically mean "class".)
+- **The forward pipe (`%>%` or `|>`)**.
+  Write a _linear_ sequence of procedures instead of a nested expression.
+  Instead of `g(f(x))` we can write `x |> f() |> g()`.
+  That rules.
+- **Unquoted expressions** let you write "ergonomic" code that remains flexible.
+  Instead of `data[["new_var"]] = ...`, we can write `mutate(data, new_var = ...)` which feels much nicer.
+
+These are the same reasons why I love the Tidyverse too.
+
+But the Tidyverse is also missing something for me.
+Something major.
+
+
+# The functional style
+
+the tidyverse advertises itself as a "functional" interface for data manipulation in r.
+and compared to the object oriented style of python (`pandas` in particular), that's certainly true.
+it is much easier to combine tidy functions (`dplyr` and `tidyr` "verbs" in particular) than it is to do, frankly, anything at all in `pandas`.
+and i write python every day for my job.
+
+But taking a wider view, the "functional" interfaces of the Tidyverse have some key limitations.
+Take the following example.
+I want to filter the `palmerpenguins` data to the "Adelie" species only.
+
+```{r}
+#| message: false
+library(palmerpenguins)
+library(dplyr)
+```
+
+```{r}
+penguins |> 
+    filter(species == "Adelie")
+```
+
+This works fine if I want to tie my functionality (drop all species but "Adelie") to my data (`penguins`).
+But can I separate these steps?
+Can I write a function (using `dplyr`) that filters on species, and then later apply that function to a dataframe?
+
+Here is what I want.
+
+
+```{r}
+#| eval: false
+
+# a "partial" recipe for filtering.
+# here is how I want to filter, regardless of the dataset.
+adelie_only = filter(species == "Adelie")
+
+# apply the filter to a dataset
+adelie_only(penguins)
+```
+
+Here is what I get:
+
+```{r}
+#| error: true
+adelie_only = filter(species == "Adelie")
+```
+
+So what we have is a **clash between two tenets of the Tidyverse interface**: functional style and unquoted expressions.
+I cannot write the function that I want to apply to my data.
+Not that easily, at least.
+
+I _could_ write the function with a "base" style...
+
+```{r}
+#| error: true
+# clunkier
+adelie_only = function(d) {
+    condition = (d$species == "Adelie")
+    d[condition, ]
+}
+
+# but at least it works
+adelie_only(penguins)
+```
+
+But there is more boilerplate code, and the magic of unquoted expressions is gone.
+So the interface is less expressive than what the Tidyverse ordinarily feels like.
+
+**More abstractly, I want to separate functions from data**.
+I want to pass data `x` to functions `f`, `g`, and `h`.
+But instead of writing this:
+
+```{r}
+#| eval: false
+x |>
+    f(...) |>
+    g(...) |>
+    h(...)
+```
+
+I want to write this:
+
+```{r}
+#| eval: false
+do_f = f(...)
+do_g = g(...)
+do_h = h(...)
+
+fgh = compose(f, g, h)
+fgh(x)
+```
+
+Why do I want this?
+Because I should be able to reuse the `do_f`, `do_g`, and `do_h` functions on different data.
+These operations don't have any necessary dependence on the data `x`, but I cannot easily write these functions as abstract expressions on some yet-to-be-provided data.
+Not with an ergonomic Tidy style, anyway.
+
+What can we do to make this possible?
+
+
+# Tidy evaluation magic
+
+Take just the `do_f` function.
+What I want to do is write an expression `f(...)` and **delay the evaluation of the arguments `...`** until I call this function with data.
+
+If this is unclear, I am going to rephrase it a handful of ways in hopes that one of them clicks.
+
+- If `f(.data = x, ...)` is a fully-formed expression that takes input data and returns output data, then `f(...)` is a procedure that we could do to some data `x`, if we were to pass `x`.
+  But if I don't pass data `x`, the statement `f(...)` is just a function.
+- If a fully-formed expression is `f(.data = x, ...)`, then the expression without data `f(.data = ?, ...)` is a partial/curried function.
+  Whereas `f` is a function that takes arguments `.data` and `...`, if we fix the `...` arguments ahead of time, the result is a function that takes only `.data`.
+  I have written about [curried functions](https://mikedecr.netlify.app/blog/partial_fns_ggplot/) before, hint hint, and have interpreted [pipe chains as curried functions](https://mikedecr.netlify.app/blog/fp_basics/#ending-notes-on-the-tidyverse) quite explicitly.
+- This is just as if `do_f = f(...)` and `do_f = \(x) f(x, ...)` were the same thing.
+
+The issue is, of course, the evaluation of the expression in the `...` slot of `f`.
+You have probably noticed that functions like `mutate`, `select`, `filter`, etc. allow you to write _unquoted_ variable names without throwing errors.
+This is similar to writing _formulae_ in R (such as in the `lm` or `aggregate` functions).
+
+How can we achieve this?
+In general, the answer to write a function that "captures" arguments unevaluated in one environment and evaluates those arguments in some different environment containing other necessary information.
+To use an example, in the code `filter(penguins, species == "Adelie")` the object `species` does not exist in the global environment.
+But it does exist in the environment of the dataset `penguins`.
+What the `filter` function does is _prevent the evaluation_ of the expression `species == "Adelie"` in the global environment, evaluating that expression in the `.data = penguins` environment instead.
+
+We must use a similar trick.
+
+# The simplest example, `delay_filter`
+
+The `filter` function already delays the evaluation of `...` into the data environment.
+But we must delay it further; I don't want to pass data _at all_ when the expression is captured.
+
+So we write a function that captures arguments `...`, and returns a _new function_ that would take `.data` and execute `filter(.data, ...)`.
+We capture the unevaluated arguments with `rlang::enquos` and evaluate them in the data context with `rlang::eval_tidy` and the `!!!` operator.
+Sadly I cannot explain these tools in detail here.
+If you want to learn more, I would recommend the [Advanced R chapters on metaprogramming](https://adv-r.hadley.nz/metaprogramming.html).
+
+```{r}
+# args -> function(.data, args)
+delay_filter = function(...) {
+    args = rlang::enquos(...)
+    function(.data) rlang::eval_tidy(filter(.data, !!!args))
+}
+```
+
+Here it is in action.
+I delay the evaluation of `filter` and pass some arguments to filter on.
+The result is a _new function_.
+
+```{r}
+# creates a function
+adelie_only = delay_filter(species == "Adelie")
+class(adelie_only)
+```
+
+And only when I pass a dataset is the expression `species == "Adelie"` evaluated.
+
+```{r}
+adelie_only(penguins)
+```
+
+
+# More generally, `delay_verb`
+
+There are more `dplyr` verbs than `filter`.
+We also have `mutate`, `select`, `count` and so on.
+How can we scale this routine up to these functions as well?
+
+This is where functional programming shines.
+Let's write a function that takes a verb and returns a delayed-verb-creator function.
+That is, we pass a function (like `filter`), and it returns a function of args `...` which would, in turn, return a function of `.data`.
+It sounds like a mouthful, but let's see how it goes.
+
+```{r}
+# verb -> (function(...) -> function(.data))
+delay_verb = function(verb) {
+    function(...) {
+        args = rlang::enquos(...)
+        function(.data) rlang::eval_tidy(verb(.data, !!!args))
+    }
+}
+```
+
+And now we can create many delayed verbs with this function.
+
+```{r}
+dfilter = delay_verb(filter)
+dmutate = delay_verb(mutate)
+dselect = delay_verb(select)
+dcount = delay_verb(count)
+dsummarize = delay_verb(summarize)
+dgroup_by = delay_verb(group_by)
+darrange = delay_verb(arrange)
+```
+
+These delayed verbs let us pre-supply arguments without data.
+
+```{r}
+# create the function
+adelie_only = dfilter(species == "Adelie")
+```
+
+And then call these functions with whatever data we want.
+
+```{r}
+adelie_only(penguins)
+```
+
+Let's verify that some other delayed verbs work as expected.
+
+```{r}
+# delay mutate: convert species to uppercase
+upper_species = dmutate(species = toupper(species))
+upper_species(penguins)
+
+# delay select: only columns that start with "bill"
+bill_cols = dselect(starts_with("bill"))
+bill_cols(penguins)
+
+# delay summarize, compute mean mass
+avg_mass = dsummarize(avg_mass = mean(body_mass_g, na.rm = TRUE))
+avg_mass(penguins)
+```
+
+
+# The payoff: even more "functional" approach to data munging
+
+As we mentioned above, one of the key benefits of the Tidyverse was composable, linear code.
+The drawback was that pipe chains need both functions _and_ data.
+
+With this new delayed interface, we can separate the functions from the data.
+So I can write the same linear pipeline of functionality _without passing any data_.
+This lets me evaluate the same function pipeline of multiple datasets without redundant typing.
+
+This new style is much more like "traditional" function composition.
+Say I have two functions $f$ and $g$.
+If I want to compose these functions, I can write the composition $g \cdot f$, which means "do $g$ after $f$".
+The result is a new function, and there is no reference to data.
+I can pass data later.
+
+Let's consider an example.
+I want to (a) filter to Adelie species, (b) compute a ratio of bill length to depth, and (c) find the mean of this ratio.
+I can write this routine _as a series of functions_ without any data.
+
+## But first... Function composition helpers
+
+First I will write a tool to facilitate function composition.
+This `compose` function takes two functions, `g` and `f`, and returns a new function that applies `g` after `f` to whatever data you provide.
+
+```{r}
+# (function, function) -> function
+compose = function(g, f) function(...) g(f(...))
+
+# and as an infix operator :)
+`%.%` = compose
+```
+
+Traditional function composition is "left" composition: $g \cdot f$ means "$g$ after $f$", which isn't linear.
+To be more consistent with R's "pipe" style, we can write a rightward version:
+
+```{r}
+# (function, function) -> function
+compose_right = function(f, g) compose(g, f)
+
+# as infix
+`%;%` = compose_right
+```
+
+To demonstrate:
+
+```{r}
+x = c(1, 1, 2, 2, 2)
+compose(length, unique)(x)
+
+# same as...
+(length %.% unique)(x)
+
+# same as...
+compose_right(unique, length)(x)
+
+# same as...
+(unique %;% length)(x)
+```
+
+
+## Okay, now the example.
+
+Here's the recipe I stated above:
+
+a. filter to Adelie species
+b. compute a ratio of bill length to depth
+c. find the mean of this ratio
+
+Here we write these steps with _delayed_ verbs.
+Each of these expressions return **separate functions** from dataframe to dataframe.
+
+```{r}
+adelie_only = dfilter(species == "Adelie")
+
+compute_length_to_depth = dmutate(
+    bill_length_to_depth = bill_length_mm / bill_depth_mm
+)
+
+mean_bill_ratio = dsummarize(
+    avg_bill_ratio = mean(bill_length_to_depth, na.rm = TRUE)
+)
+```
+
+I can now write a "data pipeline" not as eager actions on data, but as **functions** that don't need to know anything about data.
+
+```{r}
+# using "right" / "postfix" composition
+adelie_mean_bill_ratio = (
+    adelie_only %;%
+    compute_length_to_depth %;%
+    mean_bill_ratio
+)
+```
+
+Since my pipeline is a _function_, it is simple to apply it to any dataset I want.
+For instance, here it is in the full dataset:
+
+```{r}
+adelie_mean_bill_ratio(penguins)
+```
+
+But let's say I wanted to group by year and sex and compute the same pipeline.
+Do I need to write the same pipeline with a different starting point?
+Do I need to stack my data and apply my pipeline with `purrr::map`?
+No, I simply call the function on a different dataset.
+
+
+```{r}
+# grouping: this is also a function :)
+by_year_sex = dgroup_by(year, sex)
+
+# using left composition this time
+compose(adelie_mean_bill_ratio, by_year_sex)(penguins)
+```
+
+
+# The argument for "Delayplyr": functions over pipelines
+
+The proposition of a delayed / functional approach to data manipulation is that you can create complex results by writing and applying functions instead of executing procedures on data.
+
+One key benefit of this style is modularity.
+Many of the "steps" in your pipeline are not dependent on the exact state of your data in the pipeline.
+They can instead be expressions that would do _some operation_ to _some data_.
+In that approach, your "pipeline" isn't a dataset being transformed; it is the _recipe_ for transforming the data.
+The difference?
+A pipeline binds the functions to the data
+The recipe lets the functions exist separate from the data.
+
+As a result, you can write and save many separate components ahead of time: `adelie_only`, `compute_length_to_depth`, `mean_bill_ratio`, `by_year_sex`...
+In a traditional `dplyr` chain, these functions would be steps in a pipe chain that have to carry the data from one state to the next.
+The state of the data in one function is intimately related to the state of the data in all prior functions.
+And although `dplyr` verbs are in theory abstract functions on dataframes, the pipelines you create are not abstract at all.
+They are actually quite fragile.
+
+But when you write a lot of separate functions, these functions don't depend on one another.
+You can costlessly combine and rearrange them.
+You only pay the cost when you apply the functions on data, which you can do much more flexibly now that you have separated the data from the chain of operations.
+
+Now _that_ is functional programming with the Tidyverse!
+
+
