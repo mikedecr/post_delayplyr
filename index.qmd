@@ -1,7 +1,8 @@
 ---
 author: Michael DeCrescenzo
 categories: [code, r]
-title: 'Dreams of a "Lazyverse": a delayed evaluation interface for tidy data manipulation in R'
+title: 'Dreams of a "Lazyverse"'
+subtitle: A delayed, functional interface for tidy data wrangling
 # subtitle: Lazyverse
 # excerpt
 date: "2023-06-30"
