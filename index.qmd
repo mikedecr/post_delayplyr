@@ -5,7 +5,7 @@ title: 'Dreams of a "Lazyverse"'
 subtitle: A delayed, functional interface for tidy data wrangling
 # subtitle: Lazyverse
 # excerpt
-date: "2023-06-30"
+date: "2023-07-06"
 knitr:
     opts_chunk:
         eval: true
