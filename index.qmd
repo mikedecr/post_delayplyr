@@ -294,25 +294,18 @@ I can write this routine _as a series of functions_ without any data.
 
 ## But first... Function composition helpers
 
-First I will write a tool to facilitate function composition.
+First I will write some tools to facilitate function composition.
 This `compose` function takes two functions, `g` and `f`, and returns a new function that applies `g` after `f` to whatever data you provide.
+I also write a `compose_right`, which reverses the direction of composition, and infix operators for both functions.
+If you are unfamiliar with what is going on here, you are invited to read [this other post](https://mikedecr.netlify.app/blog/composition/).
 
 ```{r}
-# (function, function) -> function
+# (g, f) -> (g . f)
 compose = function(g, f) function(...) g(f(...))
-
-# and as an infix operator :)
 `%.%` = compose
-```
 
-Traditional function composition is "left" composition: $g \cdot f$ means "$g$ after $f$", which isn't linear.
-To be more consistent with R's "pipe" style, we can write a rightward version:
-
-```{r}
-# (function, function) -> function
+# (f, g) -> (g . f)
 compose_right = function(f, g) compose(g, f)
-
-# as infix
 `%;%` = compose_right
 ```
 
@@ -324,11 +317,7 @@ compose(length, unique)(x)
 
 # same as...
 (length %.% unique)(x)
-
-# same as...
 compose_right(unique, length)(x)
-
-# same as...
 (unique %;% length)(x)
 ```
 
