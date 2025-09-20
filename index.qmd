@@ -26,7 +26,7 @@ It is surely incomplete.
 But the interface is interesting and appealing at least to me, a nostalgic R user with a new love of functional programming.
 
 
-# (Many) R users love the Tidyverse
+## (Many) R users love the Tidyverse
 
 Let us count the reasons:
 
@@ -49,7 +49,7 @@ But the Tidyverse is also missing something for me.
 Something major.
 
 
-# The functional style
+## The functional style
 
 the tidyverse advertises itself as a "functional" interface for data manipulation in r.
 and compared to the object oriented style of python (`pandas` in particular), that's certainly true.
@@ -149,7 +149,7 @@ Not with an ergonomic Tidy style, anyway.
 What can we do to make this possible?
 
 
-# Tidy evaluation magic
+## Tidy evaluation magic
 
 Take just the `do_f` function.
 What I want to do is write an expression `f(...)` and **delay the evaluation of the arguments `...`** until I call this function with data.
@@ -175,7 +175,7 @@ What the `filter` function does is _prevent the evaluation_ of the expression `s
 
 We must use a similar trick.
 
-# The simplest example, `delay_filter`
+## The simplest example, `delay_filter`
 
 The `filter` function already delays the evaluation of `...` into the data environment.
 But we must delay it further; I don't want to pass data _at all_ when the expression is captured.
@@ -210,7 +210,7 @@ adelie_only(penguins)
 ```
 
 
-# More generally, `delay_verb`
+## More generally, `delay_verb`
 
 There are more `dplyr` verbs than `filter`.
 We also have `mutate`, `select`, `count` and so on.
@@ -273,7 +273,7 @@ avg_mass(penguins)
 ```
 
 
-# The payoff: even more "functional" approach to data munging
+## The payoff: even more "functional" approach to data munging
 
 As we mentioned above, one of the key benefits of the Tidyverse was composable, linear code.
 The drawback was that pipe chains need both functions _and_ data.
@@ -292,7 +292,7 @@ Let's consider an example.
 I want to (a) filter to Adelie species, (b) compute a ratio of bill length to depth, and (c) find the mean of this ratio.
 I can write this routine _as a series of functions_ without any data.
 
-## But first... Function composition helpers
+### But first... Function composition helpers
 
 First I will write some tools to facilitate function composition.
 This `compose` function takes two functions, `g` and `f`, and returns a new function that applies `g` after `f` to whatever data you provide.
@@ -322,7 +322,7 @@ compose_right(unique, length)(x)
 ```
 
 
-## Okay, now the example.
+### Okay, now the example.
 
 Here's the recipe I stated above:
 
@@ -378,7 +378,7 @@ compose(adelie_mean_bill_ratio, by_year_sex)(penguins)
 ```
 
 
-# The argument for "Delayplyr": functions over pipelines
+## The argument for "Delayplyr": functions over pipelines
 
 The proposition of a delayed / functional approach to data manipulation is that you can create complex results by writing and applying functions instead of executing procedures on data.
 
